@@ -1,0 +1,2226 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VisionSolve AI — 실시간 카메라·화면 캡처 문제 분석기</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #0b0f19;
+      color: #e2e8f0;
+    }
+    input[type="range"] {
+      accent-color: #6366f1;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      70% { transform: scale(1.15); opacity: 0; }
+      100% { transform: scale(1.15); opacity: 0; }
+    }
+    .animate-pulse-ring {
+      animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <!-- AMOLED Black Touch-Lock Overlay (Keeps camera & earbud remote alive, blocks pocket touches) -->
+  <div id="touchLockOverlay" class="fixed inset-0 z-50 hidden flex-col items-center justify-center bg-black text-slate-600 select-none touch-none">
+    <div id="touchLockHint" class="flex flex-col items-center gap-3 px-6 text-center pointer-events-none">
+      <div class="w-12 h-12 rounded-full border border-slate-800 flex items-center justify-center text-slate-600">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+      </div>
+      <p class="text-xs text-slate-600">화면 터치 잠금 중 (이어폰 리모컨 작동)</p>
+      <p class="text-[11px] text-slate-700">잠금 해제하려면 화면을 2.5초간 길게 누르세요</p>
+      <div class="w-40 h-1.5 bg-slate-900 rounded-full overflow-hidden">
+        <div id="unlockProgressBar" class="h-full w-0 bg-indigo-500 transition-none"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="fixed inset-0 z-40 hidden items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+          <h2 class="text-base font-semibold text-white">AI 엔진 및 API 설정</h2>
+        </div>
+        <button id="closeSettingsBtn" type="button" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-4 text-sm">
+        <div>
+          <label class="block text-slate-300 font-medium mb-1.5" for="providerSelect">AI 제공자</label>
+          <select id="providerSelect" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="gemini" selected>Google Gemini (3.5 Flash-Lite 고정)</option>
+          </select>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-slate-300 font-medium" for="modelInput">모델명 (고정)</label>
+            <span class="text-[11px] px-2 py-0.5 rounded bg-indigo-600/25 text-indigo-200 border border-indigo-500/40">무료 · 초고속</span>
+          </div>
+          <input id="modelInput" type="text" value="gemini-3.5-flash-lite" readonly class="w-full bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2.5 text-slate-200 cursor-not-allowed focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-slate-300 font-medium mb-1.5" for="apiKeyInput">API Key</label>
+          <div class="relative">
+            <input id="apiKeyInput" type="password" placeholder="API 키를 입력하세요 (브라우저 내 로컬 저장)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 pr-20 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button id="toggleKeyVisBtn" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700/70">보기</button>
+          </div>
+          <p class="text-xs text-slate-400 mt-1.5">API 키는 외부 서버를 거치지 않고 브라우저에서 AI API로 직접 전송됩니다. 키 없이도 '데모 분석'으로 동작을 테스트할 수 있습니다.</p>
+        </div>
+        <div>
+          <label class="block text-slate-300 font-medium mb-1.5" for="backupGeminiKeyInput">백업 Gemini API Key (다른 계정 · 한도/오류 시 자동 전환)</label>
+          <input id="backupGeminiKeyInput" type="password" placeholder="AQ.... (다른 구글 계정의 Gemini API 키)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label class="block text-slate-300 font-medium mb-1.5" for="customPromptInput">추가 분석 지침 (선택)</label>
+          <textarea id="customPromptInput" rows="2" placeholder="예: 정답 번호만 맨 위에 크게 표시하고, 핵심 공식 위주로 3줄 이내로 설명해줘." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        </div>
+        <div id="apiTestResult" class="hidden text-xs px-3 py-2 rounded-xl border"></div>
+        <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+          <button id="clearApiKeyBtn" type="button" class="text-xs text-rose-400 hover:text-rose-300 px-3 py-2 rounded-lg hover:bg-rose-500/10 transition">저장된 키 삭제</button>
+          <div class="flex gap-2">
+            <button id="testApiBtn" type="button" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl border border-slate-700 transition">연결 테스트</button>
+            <button id="saveSettingsBtn" type="button" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition">설정 저장</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Navigation Bar -->
+  <header class="border-b border-slate-800/80 bg-slate-950/90 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-base sm:text-lg font-bold text-white tracking-tight">VisionSolve AI</h1>
+            <span id="statusBadge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700">
+              <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-400"></span>
+              <span id="statusText">대기 중</span>
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 hidden sm:block">초소형 카메라 · 외부 스트리밍 화면 실시간 보정 및 AI 문제 풀이</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <span id="apiModeBadge" class="text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/30 font-medium">데모 모드 (키 미설정)</span>
+        <button id="touchLockBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium border border-slate-700 transition" title="카메라와 이어폰 리모컨을 켠 채 화면을 까맣게 가리고 오터치를 잠급니다">
+          <span>화면 잠금</span>
+        </button>
+        <button id="openSettingsBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium border border-slate-700 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span>AI 설정</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 lg:p-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
+    
+    <!-- Left / Center Column: Video Stream + Filters + Capture Controls -->
+    <section class="xl:col-span-7 flex flex-col gap-4">
+      
+      <!-- Source Connection Toolbar -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="connectScreenBtn" type="button" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-medium transition shadow-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            <span>외부 앱 화면 캡처</span>
+          </button>
+          <button id="connectCameraBtn" type="button" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium transition shadow-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <span>카메라 직접 연결</span>
+          </button>
+          <select id="cameraSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-slate-200 max-w-[180px] focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <option value="">기본 카메라 자동 선택</option>
+          </select>
+          <button id="demoStreamBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+            <span>저화질 샘플 테스트</span>
+          </button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="stopStreamBtn" type="button" class="hidden inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 text-xs font-medium transition">
+            <span>연결 종료</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Canvas Viewport -->
+      <div class="relative bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+        <!-- Top Overlay Bar -->
+        <div class="flex items-center justify-between gap-2 px-3.5 py-2 bg-slate-900/80 border-b border-slate-800 text-xs">
+          <span id="resolutionLabel" class="font-mono text-slate-400">해상도: -- × --</span>
+          <span class="text-[11px] text-emerald-300">자동 화질 보정 · 방향 자동 판독 활성</span>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="relative w-full aspect-video bg-black flex items-center justify-center select-none overflow-hidden">
+          <video id="sourceVideo" autoplay playsinline muted style="position:fixed;width:2px;height:2px;opacity:0.01;pointer-events:none;"></video>
+          <canvas id="previewCanvas" class="max-w-full max-h-full w-auto h-auto cursor-crosshair block"></canvas>
+
+          <!-- Empty State Overlay -->
+          <div id="emptyStateOverlay" class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/90">
+            <div class="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-3 text-indigo-400">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            </div>
+            <h3 class="text-base font-semibold text-white mb-1">카메라 또는 외부 앱 화면을 연결하세요</h3>
+            <p class="text-xs sm:text-sm text-slate-400 max-w-md mb-4">상단의 <strong>외부 앱 화면 캡처</strong>로 스트리밍 창을 선택하거나, <strong>카메라 직접 연결</strong>로 초소형·USB 카메라를 연결할 수 있습니다. 캔버스 위를 드래그하면 문제 영역만 잘라서 분석합니다.</p>
+            <button id="emptyDemoBtn" type="button" class="px-4 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 text-xs font-medium transition">저화질 문제 샘플로 필터 테스트하기</button>
+          </div>
+        </div>
+
+        <!-- Capture & Full-Auto Action Bar -->
+        <div class="p-3.5 bg-slate-900/90 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="autoRunBtn" type="button" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-semibold shadow-lg shadow-emerald-600/20 transition">
+              <span id="autoRunDot" class="w-2.5 h-2.5 rounded-full bg-white"></span>
+              <span id="autoRunLabel">자동 감시 시작</span>
+            </button>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 bg-slate-950/70 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
+            <label class="inline-flex items-center gap-1.5 cursor-pointer text-cyan-300" title="블루투스 이어폰(QCY T1 등) 터치로 자동 감시 시작/멈춤을 제어합니다 (완전 무음)">
+              <input id="earbudRemoteToggle" type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-600 text-cyan-500" />
+              <span>이어폰 리모컨</span>
+            </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer text-slate-300" title="보정본과 원본을 함께 보내 밑줄(어법)이나 흐린 기호 누락을 방지합니다">
+              <input id="dualSendToggle" type="checkbox" checked class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-600 text-indigo-500" />
+              <span>이중전송</span>
+            </label>
+            <select id="intervalSecSelect" class="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none">
+              <option value="smart" selected>스마트 자동 (변화+안정화)</option>
+              <option value="3">3초 주기</option>
+              <option value="5">5초 주기</option>
+              <option value="10">10초 주기</option>
+              <option value="15">15초 주기</option>
+            </select>
+            <label class="hidden" aria-hidden="true">
+              <input id="autoIntervalToggle" type="checkbox" />
+              <input id="changeDetectToggle" type="checkbox" checked />
+            </label>
+            <span id="countdownBadge" class="hidden font-mono text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">감시 중</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Automatic Miniature-Camera Optimization Status -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span class="font-semibold text-white">초소형 카메라 전용 실시간 자동 최적화</span>
+        </div>
+        <span class="text-[11px] text-slate-400">자동 밝기 · 2%~98% 대비 스트레칭 · 노이즈 억제 선명화 상시 적용</span>
+      </div>
+    </section>
+
+    <!-- Right Column: AI Analysis Result & History -->
+    <section class="xl:col-span-5 flex flex-col gap-4">
+      
+      <!-- Problem Type & Prompt Preset -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-medium text-indigo-300 px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30">영어 전용</span>
+          <select id="problemModeSelect" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="eng_all" selected>영어 종합 (단어 · 어법 · 논리 · 문법 · 독해)</option>
+            <option value="eng_vocab">영어 단어 · 어휘 (동의어/반의어/문맥 어휘)</option>
+            <option value="eng_grammar">영어 어법 · 문법 (밑줄 어법/문장 구조)</option>
+            <option value="eng_logic">영어 논리 · 빈칸 추론 (연결사/순서/삽입)</option>
+            <option value="eng_reading">영어 독해 (주제/요지/일치·불일치)</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-200 cursor-pointer">
+            <input id="vibrateToggle" type="checkbox" checked class="w-3.5 h-3.5 rounded bg-slate-700 border-slate-600 text-indigo-500" />
+            <span>자동 진동</span>
+          </label>
+          <button id="replayVibrateBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-medium border border-indigo-500/30 transition">
+            <span>진동 알림</span>
+          </button>
+          <button id="copyResultBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            <span>결과 복사</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Current AI Result Card -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex-1 flex flex-col min-h-[340px]">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-white">AI 분석 결과</h2>
+            <span id="analyzingSpinner" class="hidden inline-flex items-center gap-1.5 text-xs text-indigo-300">
+              <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+              <span>분석 중...</span>
+            </span>
+          </div>
+          <span id="resultTimestamp" class="text-xs text-slate-500 font-mono">--:--:--</span>
+        </div>
+
+        <div id="vibrateIndicatorBar" class="mt-3 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <span id="vibratePulseDot" class="w-2.5 h-2.5 rounded-full bg-slate-600 shrink-0 transition-transform duration-75"></span>
+              <span id="vibratePhaseText" class="text-slate-200 font-medium truncate">진동 대기 중</span>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <label class="inline-flex items-center gap-1 cursor-pointer text-[11px] text-emerald-300" title="긴 진동을 미세 펄스로 쪼개 주변 공진음을 줄이고 몸에만 닿게 합니다">
+                <input id="stealthVibrateToggle" type="checkbox" checked class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-600 text-emerald-500" />
+                <span>초근접 약진동</span>
+              </label>
+              <span class="text-[11px] text-slate-400">세기</span>
+              <input id="vibrateStrengthSlider" type="range" min="0.2" max="1.5" step="0.1" value="1.0" class="w-16 sm:w-20" title="진동 지속 시간 배율로 체감 세기를 조절합니다" />
+              <span id="vibrateStrengthVal" class="font-mono text-[11px] text-indigo-300 w-9 text-right">100%</span>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="text-[10px] text-slate-500 mr-1">간단 테스트:</span>
+              <button type="button" data-vib-test="5번: ①" class="vib-test-btn px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] transition">5번 ①</button>
+              <button type="button" data-vib-test="19번: ③" class="vib-test-btn px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] transition">19번 ③</button>
+              <button type="button" data-vib-test="40번: ⑤" class="vib-test-btn px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] transition">40번 ⑤</button>
+            </div>
+            <span class="text-[10px] text-slate-500">2.0초쉼=구분 · 5+N방식</span>
+          </div>
+        </div>
+        <div id="resultContent" class="flex-1 py-4 overflow-y-auto custom-scroll space-y-4">
+          <div class="h-full flex flex-col items-center justify-center text-center text-slate-500 py-10">
+            <svg class="w-10 h-10 mb-2.5 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            <p class="text-sm font-medium text-slate-400">아직 분석된 문제가 없습니다</p>
+            <p class="text-xs text-slate-500 mt-1">카메라를 연결한 뒤 '자동 감시 시작' 또는 이어폰 리모컨으로 시작하세요.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Capture History -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-white">캡처 히스토리</h3>
+            <span id="historyCount" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">0</span>
+          </div>
+          <button id="clearHistoryBtn" type="button" class="text-xs text-slate-400 hover:text-rose-400 transition">전체 비우기</button>
+        </div>
+        <div id="historyList" class="space-y-2 max-h-56 overflow-y-auto custom-scroll pr-1">
+          <p class="text-xs text-slate-500 text-center py-4">기록된 캡처 내역이 여기에 표시됩니다.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Silent Audio Keepalive for Bluetooth Earbud MediaSession Control (0dB Digital Silence) -->
+  <audio id="silentKeepaliveAudio" loop playsinline style="position:fixed;width:1px;height:1px;opacity:0.01;pointer-events:none;"></audio>
+  <!-- Hidden Offscreen Canvases -->
+  <canvas id="rawOffscreenCanvas" class="hidden"></canvas>
+  <canvas id="diffOffscreenCanvas" width="64" height="64" class="hidden"></canvas>
+
+  <script>
+    (() => {
+      // ===== State =====
+      const state = {
+        stream: null,
+        sourceType: null, // 'camera' | 'screen' | 'demo'
+        animFrameId: null,
+        isAnalyzing: false,
+        compareOriginal: false,
+        rotationDeg: 0,
+        mirrorX: false,
+        roi: null, // { x, y, w, h } in normalized 0..1 coordinates
+        isDraggingRoi: false,
+        dragStart: null,
+        dragCurrent: null,
+        isAutoRunning: false,
+        isVibrating: false,
+        isTouchLocked: false,
+        earbudConnectedActive: false,
+        lastRemoteActionAt: 0,
+        intervalTimer: null,
+        smartWatchTimer: null,
+        lastMonitorFrame: null,
+        lastAnalyzedFrame: null,
+        lastStableChangeAt: 0,
+        pendingChangeToAnalyze: false,
+        countdownSec: 0,
+        vibrateStrength: 1.0,
+        lastSentDiffData: null,
+        wakeLock: null,
+        shotQueue: [], // Array of { filteredB64, rawB64 }
+        autoCarryShot: null, // Holds previous partial frame if AI returned '재촬영 필요'
+        lastSuccessShot: null, // Holds last solved frame (90s) for multi-question reading passages like [23~25]
+        history: [],
+        currentResultText: '',
+        demoAnimTick: 0,
+        settings: {
+          provider: 'gemini',
+          model: 'gemini-3.5-flash-lite',
+          apiKey: 'AQ.Ab8RN6L2UrheWnq7SQUOrgolHTEzoLIWOtwCDZQxmrgBwvT8gw',
+          backupGeminiKey: '',
+          customPrompt: ''
+        },
+        filters: {
+          grayscale: true,
+          autoContrast: true,
+          binarize: false,
+          contrast: 1.5,
+          sharpness: 100,
+          brightness: 5,
+          threshold: 128
+        }
+      };
+
+      // ===== DOM Elements =====
+      const el = {
+        video: document.getElementById('sourceVideo'),
+        previewCanvas: document.getElementById('previewCanvas'),
+        rawCanvas: document.getElementById('rawOffscreenCanvas'),
+        diffCanvas: document.getElementById('diffOffscreenCanvas'),
+        emptyOverlay: document.getElementById('emptyStateOverlay'),
+        statusDot: document.getElementById('statusDot'),
+        statusText: document.getElementById('statusText'),
+        apiModeBadge: document.getElementById('apiModeBadge'),
+        resolutionLabel: document.getElementById('resolutionLabel'),
+        connectScreenBtn: document.getElementById('connectScreenBtn'),
+        connectCameraBtn: document.getElementById('connectCameraBtn'),
+        cameraSelect: document.getElementById('cameraSelect'),
+        demoStreamBtn: document.getElementById('demoStreamBtn'),
+        emptyDemoBtn: document.getElementById('emptyDemoBtn'),
+        stopStreamBtn: document.getElementById('stopStreamBtn'),
+        autoRunBtn: document.getElementById('autoRunBtn'),
+        autoRunDot: document.getElementById('autoRunDot'),
+        autoRunLabel: document.getElementById('autoRunLabel'),
+
+        earbudRemoteToggle: document.getElementById('earbudRemoteToggle'),
+        silentAudio: document.getElementById('silentKeepaliveAudio'),
+        dualSendToggle: document.getElementById('dualSendToggle'),
+        autoIntervalToggle: document.getElementById('autoIntervalToggle'),
+        intervalSecSelect: document.getElementById('intervalSecSelect'),
+        changeDetectToggle: document.getElementById('changeDetectToggle'),
+        countdownBadge: document.getElementById('countdownBadge'),
+
+        problemModeSelect: document.getElementById('problemModeSelect'),
+        vibrateToggle: document.getElementById('vibrateToggle'),
+        replayVibrateBtn: document.getElementById('replayVibrateBtn'),
+        vibrateIndicatorBar: document.getElementById('vibrateIndicatorBar'),
+        vibratePulseDot: document.getElementById('vibratePulseDot'),
+        vibratePhaseText: document.getElementById('vibratePhaseText'),
+        stealthVibrateToggle: document.getElementById('stealthVibrateToggle'),
+        vibrateStrengthSlider: document.getElementById('vibrateStrengthSlider'),
+        vibrateStrengthVal: document.getElementById('vibrateStrengthVal'),
+        copyResultBtn: document.getElementById('copyResultBtn'),
+        analyzingSpinner: document.getElementById('analyzingSpinner'),
+        resultTimestamp: document.getElementById('resultTimestamp'),
+        resultContent: document.getElementById('resultContent'),
+        historyCount: document.getElementById('historyCount'),
+        historyList: document.getElementById('historyList'),
+        clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+        settingsModal: document.getElementById('settingsModal'),
+        touchLockBtn: document.getElementById('touchLockBtn'),
+        touchLockOverlay: document.getElementById('touchLockOverlay'),
+        unlockProgressBar: document.getElementById('unlockProgressBar'),
+        openSettingsBtn: document.getElementById('openSettingsBtn'),
+        closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+        providerSelect: document.getElementById('providerSelect'),
+        modelInput: document.getElementById('modelInput'),
+        apiKeyInput: document.getElementById('apiKeyInput'),
+        backupGeminiKeyInput: document.getElementById('backupGeminiKeyInput'),
+        toggleKeyVisBtn: document.getElementById('toggleKeyVisBtn'),
+        customPromptInput: document.getElementById('customPromptInput'),
+        apiTestResult: document.getElementById('apiTestResult'),
+        testApiBtn: document.getElementById('testApiBtn'),
+        clearApiKeyBtn: document.getElementById('clearApiKeyBtn'),
+        saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+        toastContainer: document.getElementById('toastContainer')
+      };
+
+      const previewCtx = el.previewCanvas.getContext('2d', { willReadFrequently: true });
+      const rawCtx = el.rawCanvas.getContext('2d', { willReadFrequently: true });
+      const diffCtx = el.diffCanvas.getContext('2d', { willReadFrequently: true });
+
+      // ===== Toast Helper =====
+      function showToast(message, type = 'info') {
+        const colors = {
+          info: 'bg-slate-800 border-slate-700 text-slate-100',
+          success: 'bg-emerald-950/95 border-emerald-700 text-emerald-200',
+          warn: 'bg-amber-950/95 border-amber-700 text-amber-200',
+          error: 'bg-rose-950/95 border-rose-700 text-rose-200'
+        };
+        const toast = document.createElement('div');
+        toast.className = `pointer-events-auto px-4 py-2.5 rounded-xl border text-xs sm:text-sm shadow-xl transition-all duration-300 ${colors[type] || colors.info}`;
+        toast.textContent = message;
+        el.toastContainer.appendChild(toast);
+        setTimeout(() => {
+          toast.style.opacity = '0';
+          setTimeout(() => toast.remove(), 300);
+        }, 3200);
+      }
+
+      // ===== Storage Helpers =====
+      function loadSettings() {
+        try {
+          const saved = localStorage.getItem('visionsolve_settings_v1');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            state.settings = {
+              ...state.settings,
+              ...parsed,
+              apiKey: parsed.apiKey || state.settings.apiKey,
+              backupGeminiKey: parsed.backupGeminiKey || state.settings.backupGeminiKey
+            };
+            // Lock model to gemini-3.5-flash-lite
+            state.settings.provider = 'gemini';
+            state.settings.model = 'gemini-3.5-flash-lite';
+            localStorage.setItem('visionsolve_settings_v1', JSON.stringify(state.settings));
+          }
+        } catch (e) {
+          // Ignore storage error
+        }
+        el.providerSelect.value = state.settings.provider;
+        el.modelInput.value = state.settings.model;
+        el.apiKeyInput.value = state.settings.apiKey;
+        el.backupGeminiKeyInput.value = state.settings.backupGeminiKey;
+        el.customPromptInput.value = state.settings.customPrompt;
+        updateApiModeBadge();
+      }
+
+      function saveSettings() {
+        state.settings.provider = el.providerSelect.value;
+        state.settings.provider = 'gemini';
+        state.settings.model = 'gemini-3.5-flash-lite';
+        state.settings.apiKey = el.apiKeyInput.value.trim();
+        state.settings.backupGeminiKey = el.backupGeminiKeyInput.value.trim();
+        state.settings.customPrompt = el.customPromptInput.value.trim();
+        try {
+          localStorage.setItem('visionsolve_settings_v1', JSON.stringify(state.settings));
+        } catch (e) {
+          // Ignore storage error
+        }
+        updateApiModeBadge();
+        el.settingsModal.classList.add('hidden');
+        el.settingsModal.classList.remove('flex');
+        showToast('AI 설정이 저장되었습니다.', 'success');
+      }
+
+      function updateApiModeBadge() {
+        if (state.settings.apiKey) {
+          const backupTag = state.settings.backupGeminiKey ? ' + 백업 키' : '';
+          el.apiModeBadge.textContent = `GEMINI 연결됨 (${state.settings.model})${backupTag}`;
+          el.apiModeBadge.className = 'text-xs px-2.5 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-medium';
+        } else {
+          el.apiModeBadge.textContent = '데모 모드 (키 미설정)';
+          el.apiModeBadge.className = 'text-xs px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/30 font-medium';
+        }
+      }
+
+      // ===== Status Indicator =====
+      function setStatus(mode, text) {
+        el.statusText.textContent = text;
+        if (mode === 'live') {
+          el.statusDot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+        } else if (mode === 'busy') {
+          el.statusDot.className = 'w-2 h-2 rounded-full bg-indigo-400 animate-ping';
+        } else {
+          el.statusDot.className = 'w-2 h-2 rounded-full bg-slate-400';
+        }
+      }
+
+      // ===== Enumerate Cameras =====
+      async function populateCameraList() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter(d => d.kind === 'videoinput');
+          const prev = el.cameraSelect.value;
+          el.cameraSelect.innerHTML = '<option value="">기본 카메라 자동 선택</option>';
+          videoInputs.forEach((dev, idx) => {
+            const opt = document.createElement('option');
+            opt.value = dev.deviceId;
+            opt.textContent = dev.label || `카메라 ${idx + 1}`;
+            el.cameraSelect.appendChild(opt);
+          });
+          if (prev) el.cameraSelect.value = prev;
+        } catch (e) {
+          // Ignore permission restrictions before capture
+        }
+      }
+
+      // ===== Stream Management =====
+      function stopCurrentStream() {
+        if (state.animFrameId) {
+          cancelAnimationFrame(state.animFrameId);
+          state.animFrameId = null;
+        }
+        if (state.stream) {
+          state.stream.getTracks().forEach(t => t.stop());
+          state.stream = null;
+        }
+        el.video.srcObject = null;
+        state.sourceType = null;
+        state.lastSentDiffData = null;
+        el.emptyOverlay.classList.remove('hidden');
+        el.stopStreamBtn.classList.add('hidden');
+        el.resolutionLabel.textContent = '해상도: -- × --';
+        setStatus('idle', '대기 중');
+        if (!state.isTouchLocked) releaseWakeLock();
+      }
+
+      async function startScreenCapture() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          showToast('이 브라우저 환경에서는 화면 캡처 API를 지원하지 않습니다.', 'error');
+          return;
+        }
+        try {
+          stopCurrentStream();
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: 'never', frameRate: { ideal: 15, max: 30 } },
+            audio: false
+          });
+          stream.getVideoTracks()[0].addEventListener('ended', () => {
+            stopCurrentStream();
+            showToast('외부 화면 캡처가 종료되었습니다.', 'info');
+          });
+          state.stream = stream;
+          state.sourceType = 'screen';
+          el.video.srcObject = stream;
+          await el.video.play();
+          el.emptyOverlay.classList.add('hidden');
+          el.stopStreamBtn.classList.remove('hidden');
+          requestWakeLock();
+          setStatus('live', '화면 캡처 중');
+          showToast('외부 앱 화면 캡처가 연결되었습니다.', 'success');
+          renderLoop();
+        } catch (err) {
+          if (err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
+            showToast(`화면 캡처 오류: ${err.message}`, 'error');
+          }
+        }
+      }
+
+      async function startCameraCapture() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          showToast('이 브라우저 환경에서는 카메라 API를 지원하지 않습니다.', 'error');
+          return;
+        }
+        try {
+          stopCurrentStream();
+          const deviceId = el.cameraSelect.value;
+          const constraints = {
+            video: deviceId
+              ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, focusMode: { ideal: 'continuous' } }
+              : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment', focusMode: { ideal: 'continuous' } },
+            audio: false
+          };
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          const track = stream.getVideoTracks()[0];
+          if (track) {
+            track.addEventListener('ended', () => {
+              if (state.sourceType === 'camera') {
+                setTimeout(() => {
+                  if (state.sourceType === 'camera') startCameraCapture();
+                }, 800);
+              }
+            });
+          }
+          state.stream = stream;
+          state.sourceType = 'camera';
+          el.video.srcObject = stream;
+          await el.video.play();
+          await populateCameraList();
+          el.emptyOverlay.classList.add('hidden');
+          el.stopStreamBtn.classList.remove('hidden');
+          requestWakeLock();
+          armBackTrap();
+          setStatus('live', '카메라 연결됨');
+          showToast('카메라가 연결되었습니다 (화면 꺼짐 방지 활성).', 'success');
+          renderLoop();
+        } catch (err) {
+          showToast(`카메라 연결 실패: ${err.message}`, 'error');
+        }
+      }
+
+      function startDemoStream() {
+        stopCurrentStream();
+        state.sourceType = 'demo';
+        el.emptyOverlay.classList.add('hidden');
+        el.stopStreamBtn.classList.remove('hidden');
+        setStatus('live', '저화질 샘플 실행 중');
+        showToast('초소형 카메라 저화질 시뮬레이션 모드가 켜졌습니다.', 'info');
+        renderLoop();
+      }
+
+      // ===== Draw Simulated Low-Quality Micro-Cam Frame =====
+      function drawDemoFrame(ctx, w, h) {
+        state.demoAnimTick += 0.03;
+        // Simulate dim, slightly yellowish low-contrast micro-camera feed
+        ctx.fillStyle = '#8b8d86';
+        ctx.fillRect(0, 0, w, h);
+
+        // Paper sheet slightly tilted / low contrast
+        ctx.save();
+        ctx.fillStyle = '#a2a49c';
+        ctx.fillRect(40, 28, w - 80, h - 56);
+
+        // Simulated blurry dark-gray English text (low contrast!)
+        ctx.filter = 'blur(0.9px)';
+        ctx.fillStyle = '#5c5e58';
+        ctx.font = 'bold 18px "Inter", sans-serif';
+        ctx.fillText('14. Choose the most appropriate word for the blank.', 65, 82);
+
+        ctx.font = '17px "Inter", serif';
+        ctx.fillText('Despite the initial skepticism, the new policy proved', 65, 132);
+        ctx.fillText('to be remarkably ________ in reducing urban congestion.', 65, 160);
+
+        ctx.font = '16px "Inter", sans-serif';
+        ctx.fillText('① obsolete   ② futile   ③ efficacious   ④ arbitrary   ⑤ redundant', 65, 220);
+
+        ctx.font = '13px "Noto Sans KR", sans-serif';
+        ctx.fillStyle = '#656760';
+        ctx.fillText('(초소형 카메라 저대비·흐림 영어 문제 시뮬레이션)', 65, 280);
+        ctx.restore();
+
+        // Subtle sensor noise grain
+        const jitterX = Math.sin(state.demoAnimTick) * 1.5;
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(45 + jitterX, 32, 120, 18);
+      }
+
+      // ===== Real-time Automatic Miniature-Camera Optimization Pipeline =====
+      function applyEnhancementFilters(imageData) {
+        const data = imageData.data;
+        const w = imageData.width;
+        const h = imageData.height;
+        const pixelCount = w * h;
+
+        const grayBuf = new Uint8ClampedArray(pixelCount);
+
+        // 1. Luminance grayscale + center vs edge brightness measurement for adaptive anti-vignetting
+        let centerSum = 0, centerCnt = 0;
+        let edgeSum = 0, edgeCnt = 0;
+        const x1 = Math.floor(w * 0.30), x2 = Math.ceil(w * 0.70);
+        const y1 = Math.floor(h * 0.30), y2 = Math.ceil(h * 0.70);
+
+        for (let y = 0, p = 0, i = 0; y < h; y++) {
+          const inY = y >= y1 && y <= y2;
+          const borderY = y < h * 0.14 || y > h * 0.86;
+          for (let x = 0; x < w; x++, p++, i += 4) {
+            const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+            grayBuf[p] = lum;
+            if (inY && x >= x1 && x <= x2) {
+              centerSum += lum;
+              centerCnt++;
+            } else if (borderY || x < w * 0.14 || x > w * 0.86) {
+              edgeSum += lum;
+              edgeCnt++;
+            }
+          }
+        }
+
+        // 1b. Adaptive radial anti-vignetting (compensates cos^4 falloff on pinhole/wide miniature lenses)
+        const centerAvg = centerCnt ? centerSum / centerCnt : 128;
+        const edgeAvg = edgeCnt ? edgeSum / edgeCnt : centerAvg;
+        const vigRatio = edgeAvg > 12 ? centerAvg / edgeAvg : 1.0;
+        // Only boost edges when edges are noticeably darker than center; cap gain to avoid noise blowup
+        const radialStrength = Math.max(0.0, Math.min(0.42, (vigRatio - 1.04) * 0.75));
+        if (radialStrength > 0.02) {
+          const cx = w * 0.5;
+          const cy = h * 0.5;
+          const invCx = 1 / Math.max(1, cx);
+          const invCy = 1 / Math.max(1, cy);
+          for (let y = 0, p = 0; y < h; y++) {
+            const dy = (y - cy) * invCy;
+            const dy2 = dy * dy;
+            for (let x = 0; x < w; x++, p++) {
+              const dx = (x - cx) * invCx;
+              const r2 = dx * dx + dy2; // 0 at center, ~2 at corners
+              const gain = 1 + radialStrength * (r2 * 0.5);
+              const boosted = grayBuf[p] * gain;
+              grayBuf[p] = boosted > 255 ? 255 : boosted;
+            }
+          }
+        }
+
+        // 1c. Local background illumination normalization (16x12 coarse grid)
+        // Estimates local paper brightness per block so vignetted/shadowed corners normalize cleanly
+        const gw = 16, gh = 12;
+        const gridCnt = gw * gh;
+        const gridMax = new Float32Array(gridCnt);
+        const gridAvg = new Float32Array(gridCnt);
+        const gridN = new Uint32Array(gridCnt);
+        const step = 2;
+        for (let y = 0; y < h; y += step) {
+          const gy = Math.min(gh - 1, Math.floor((y * gh) / h));
+          const rowOff = y * w;
+          const gRow = gy * gw;
+          for (let x = 0; x < w; x += step) {
+            const gx = Math.min(gw - 1, Math.floor((x * gw) / w));
+            const gi = gRow + gx;
+            const v = grayBuf[rowOff + x];
+            if (v > gridMax[gi]) gridMax[gi] = v;
+            gridAvg[gi] += v;
+            gridN[gi]++;
+          }
+        }
+        const rawBg = new Float32Array(gridCnt);
+        for (let gi = 0; gi < gridCnt; gi++) {
+          const avg = gridN[gi] ? gridAvg[gi] / gridN[gi] : 180;
+          // Blend block max & avg to approximate local paper background without text ink bias
+          rawBg[gi] = Math.max(48, gridMax[gi] * 0.65 + avg * 0.35);
+        }
+        // 3x3 smooth the coarse background map to eliminate block seams
+        const bgMap = new Float32Array(gridCnt);
+        for (let gy = 0; gy < gh; gy++) {
+          for (let gx = 0; gx < gw; gx++) {
+            let sum = 0, cnt = 0;
+            for (let oy = -1; oy <= 1; oy++) {
+              const ny = gy + oy;
+              if (ny < 0 || ny >= gh) continue;
+              for (let ox = -1; ox <= 1; ox++) {
+                const nx = gx + ox;
+                if (nx < 0 || nx >= gw) continue;
+                sum += rawBg[ny * gw + nx];
+                cnt++;
+              }
+            }
+            bgMap[gy * gw + gx] = sum / cnt;
+          }
+        }
+
+        const hist = new Uint32Array(256);
+        let sumLum = 0;
+        const scaleX = gw / w;
+        const scaleY = gh / h;
+        for (let y = 0, p = 0; y < h; y++) {
+          const fy = Math.max(0, Math.min(gh - 1.001, (y + 0.5) * scaleY - 0.5));
+          const gy0 = Math.floor(fy);
+          const gy1 = Math.min(gh - 1, gy0 + 1);
+          const wy = fy - gy0;
+          const row0 = gy0 * gw;
+          const row1 = gy1 * gw;
+          for (let x = 0; x < w; x++, p++) {
+            const fx = Math.max(0, Math.min(gw - 1.001, (x + 0.5) * scaleX - 0.5));
+            const gx0 = Math.floor(fx);
+            const gx1 = Math.min(gw - 1, gx0 + 1);
+            const wx = fx - gx0;
+            const bg0 = bgMap[row0 + gx0] * (1 - wx) + bgMap[row0 + gx1] * wx;
+            const bg1 = bgMap[row1 + gx0] * (1 - wx) + bgMap[row1 + gx1] * wx;
+            const localBg = bg0 * (1 - wy) + bg1 * wy;
+
+            const orig = grayBuf[p];
+            const norm = Math.min(255, (orig / localBg) * 215);
+            // Blend 60% local-normalized + 40% radial-corrected to preserve ink depth
+            const blended = Math.round(norm * 0.60 + orig * 0.40);
+            grayBuf[p] = blended;
+            hist[blended]++;
+            sumLum += blended;
+          }
+        }
+
+        // 2. Robust 2%~98% percentile bounds (ignores hot-pixel / glare outliers)
+        const lowCut = Math.floor(pixelCount * 0.02);
+        const highCut = Math.floor(pixelCount * 0.98);
+        let acc = 0, minL = 0, maxL = 255;
+        for (let k = 0; k < 256; k++) {
+          acc += hist[k];
+          if (acc >= lowCut) { minL = k; break; }
+        }
+        acc = 0;
+        for (let k = 255; k >= 0; k--) {
+          acc += hist[k];
+          if (acc >= (pixelCount - highCut)) { maxL = k; break; }
+        }
+
+        const range = Math.max(16, maxL - minL);
+        const meanLum = sumLum / Math.max(1, pixelCount);
+        // Gentle auto-brightness offset toward optimal readable paper target (~155)
+        const autoBright = Math.max(-28, Math.min(35, (155 - meanLum) * 0.25));
+        const contrastFactor = range < 90 ? 1.45 : 1.25;
+
+        for (let p = 0; p < pixelCount; p++) {
+          let v = ((grayBuf[p] - minL) * 255) / range;
+          v = contrastFactor * (v - 128) + 128 + autoBright;
+          if (v < 0) v = 0;
+          if (v > 255) v = 255;
+          grayBuf[p] = v;
+        }
+
+        // 3. Noise-cored 3x3 sharpening (115% strength, skips sensor grain < 18)
+        const sharpStrength = 1.15;
+        const outBuf = new Uint8ClampedArray(grayBuf);
+        for (let y = 1; y < h - 1; y++) {
+          const rowOffset = y * w;
+          for (let x = 1; x < w - 1; x++) {
+            const idx = rowOffset + x;
+            const center = grayBuf[idx];
+            const neighbors =
+              grayBuf[idx - w] +
+              grayBuf[idx + w] +
+              grayBuf[idx - 1] +
+              grayBuf[idx + 1];
+            const edgeDiff = 4 * center - neighbors;
+            let val = Math.abs(edgeDiff) < 18 ? center : center + sharpStrength * edgeDiff * 0.45;
+            if (val < 0) val = 0;
+            if (val > 255) val = 255;
+            outBuf[idx] = val;
+          }
+        }
+
+        for (let p = 0, i = 0; p < pixelCount; p++, i += 4) {
+          const v = outBuf[p];
+          data[i] = data[i + 1] = data[i + 2] = v;
+        }
+
+        return imageData;
+      }
+
+      // ===== Main Render Loop =====
+      function renderLoop() {
+        if (!state.sourceType) return;
+
+        let srcW = 640;
+        let srcH = 360;
+
+        if (state.sourceType === 'demo') {
+          srcW = 640;
+          srcH = 360;
+        } else if (el.video.readyState >= 2) {
+          if (el.video.paused) el.video.play().catch(() => {});
+          srcW = el.video.videoWidth || 640;
+          srcH = el.video.videoHeight || 360;
+        } else {
+          state.animFrameId = requestAnimationFrame(renderLoop);
+          return;
+        }
+
+        // Cap processing width at 960px for smooth 60fps real-time convolution
+        const scale = srcW > 960 ? 960 / srcW : 1;
+        const baseW = Math.round(srcW * scale);
+        const baseH = Math.round(srcH * scale);
+        const isRotated90 = state.rotationDeg === 90 || state.rotationDeg === 270;
+        const procW = isRotated90 ? baseH : baseW;
+        const procH = isRotated90 ? baseW : baseH;
+
+        if (el.previewCanvas.width !== procW || el.previewCanvas.height !== procH) {
+          el.previewCanvas.width = procW;
+          el.previewCanvas.height = procH;
+          el.rawCanvas.width = procW;
+          el.rawCanvas.height = procH;
+          el.resolutionLabel.textContent = `해상도: ${srcW} × ${srcH}`;
+        }
+
+        rawCtx.save();
+        rawCtx.clearRect(0, 0, procW, procH);
+        rawCtx.translate(procW / 2, procH / 2);
+        if (state.rotationDeg) rawCtx.rotate((state.rotationDeg * Math.PI) / 180);
+        if (state.mirrorX) rawCtx.scale(-1, 1);
+        if (state.sourceType === 'demo') {
+          rawCtx.translate(-baseW / 2, -baseH / 2);
+          drawDemoFrame(rawCtx, baseW, baseH);
+        } else {
+          rawCtx.drawImage(el.video, -baseW / 2, -baseH / 2, baseW, baseH);
+        }
+        rawCtx.restore();
+
+        if (state.compareOriginal) {
+          previewCtx.drawImage(el.rawCanvas, 0, 0);
+          // Split badge
+          previewCtx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+          previewCtx.fillRect(10, 10, 92, 24);
+          previewCtx.fillStyle = '#f8fafc';
+          previewCtx.font = 'bold 12px Inter, sans-serif';
+          previewCtx.fillText('원본 화면', 22, 26);
+        } else {
+          const imgData = rawCtx.getImageData(0, 0, procW, procH);
+          const filtered = applyEnhancementFilters(imgData);
+          previewCtx.putImageData(filtered, 0, 0);
+        }
+
+        // Draw ROI overlay if active or dragging
+        const activeRoi = state.isDraggingRoi ? getNormalizedDragRect() : state.roi;
+        if (activeRoi && activeRoi.w > 0.01 && activeRoi.h > 0.01) {
+          const rx = activeRoi.x * procW;
+          const ry = activeRoi.y * procH;
+          const rw = activeRoi.w * procW;
+          const rh = activeRoi.h * procH;
+
+          previewCtx.save();
+          previewCtx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+          previewCtx.beginPath();
+          previewCtx.rect(0, 0, procW, procH);
+          previewCtx.rect(rx, ry, rw, rh);
+          previewCtx.fill('evenodd');
+
+          previewCtx.strokeStyle = '#6366f1';
+          previewCtx.lineWidth = 2.5;
+          previewCtx.setLineDash([6, 4]);
+          previewCtx.strokeRect(rx, ry, rw, rh);
+          previewCtx.restore();
+        }
+
+        state.animFrameId = requestAnimationFrame(renderLoop);
+      }
+
+      // ===== ROI Mouse / Touch Drag =====
+      function getCanvasNormalizedCoords(clientX, clientY) {
+        const rect = el.previewCanvas.getBoundingClientRect();
+        const x = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        const y = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+        return { x, y };
+      }
+
+      function getNormalizedDragRect() {
+        if (!state.dragStart || !state.dragCurrent) return null;
+        const x = Math.min(state.dragStart.x, state.dragCurrent.x);
+        const y = Math.min(state.dragStart.y, state.dragCurrent.y);
+        const w = Math.abs(state.dragCurrent.x - state.dragStart.x);
+        const h = Math.abs(state.dragCurrent.y - state.dragStart.y);
+        return { x, y, w, h };
+      }
+
+      el.previewCanvas.addEventListener('pointerdown', (e) => {
+        if (!state.sourceType) return;
+        state.isDraggingRoi = true;
+        state.dragStart = getCanvasNormalizedCoords(e.clientX, e.clientY);
+        state.dragCurrent = { ...state.dragStart };
+        el.previewCanvas.setPointerCapture(e.pointerId);
+      });
+
+      el.previewCanvas.addEventListener('pointermove', (e) => {
+        if (!state.isDraggingRoi) return;
+        state.dragCurrent = getCanvasNormalizedCoords(e.clientX, e.clientY);
+      });
+
+      el.previewCanvas.addEventListener('pointerup', () => {
+        if (!state.isDraggingRoi) return;
+        state.isDraggingRoi = false;
+        const rect = getNormalizedDragRect();
+        if (rect && rect.w > 0.04 && rect.h > 0.04) {
+          state.roi = rect;
+        }
+      });
+
+      // ===== Sharpness Score (Laplacian Variance) =====
+      function computeSharpnessScore(canvas) {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const w = Math.min(240, canvas.width);
+        const h = Math.min(180, canvas.height);
+        const small = document.createElement('canvas');
+        small.width = w;
+        small.height = h;
+        const sCtx = small.getContext('2d');
+        sCtx.drawImage(canvas, 0, 0, w, h);
+        const d = sCtx.getImageData(0, 0, w, h).data;
+        let sumSq = 0;
+        let count = 0;
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const i = (y * w + x) * 4;
+            const c = d[i];
+            const lap = 4 * c - d[i - 4] - d[i + 4] - d[i - w * 4] - d[i + w * 4];
+            sumSq += lap * lap;
+            count++;
+          }
+        }
+        return count > 0 ? sumSq / count : 0;
+      }
+
+      // ===== Occlusion / Blank Frame Guard =====
+      function isOccludedOrBlank(canvas) {
+        // Check raw unstretched frame for true darkness/glare, and use gentle sharpness floor for soft micro-cams
+        const target = canvas._rawCanvas || canvas;
+        const w = 48, h = 36;
+        const small = document.createElement('canvas');
+        small.width = w;
+        small.height = h;
+        const ctx = small.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(target, 0, 0, w, h);
+        const d = ctx.getImageData(0, 0, w, h).data;
+        let sum = 0;
+        const n = w * h;
+        for (let i = 0; i < d.length; i += 4) {
+          sum += (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+        }
+        const mean = sum / n;
+        if (mean < 16 || mean > 248) return '가려짐/과노출';
+        if ((canvas._sharpness || 0) < 2.5) return '화면 비어있음';
+        return null;
+      }
+
+      // ===== Capture Cropped & Filtered + Raw Frame =====
+      function captureFilteredSnapshot() {
+        const pw = el.previewCanvas.width;
+        const ph = el.previewCanvas.height;
+        if (!pw || !ph) return null;
+
+        const crop = state.roi || { x: 0, y: 0, w: 1, h: 1 };
+        const sx = Math.round(crop.x * pw);
+        const sy = Math.round(crop.y * ph);
+        const sw = Math.max(10, Math.round(crop.w * pw));
+        const sh = Math.max(10, Math.round(crop.h * ph));
+
+        // Upscale small crops slightly (min 640px wide, max 1280px) for crisp OCR
+        const targetScale = sw < 640 ? Math.min(2, 640 / sw) : 1;
+        const ow = Math.round(sw * targetScale);
+        const oh = Math.round(sh * targetScale);
+
+        // Raw cropped canvas
+        const rawOut = document.createElement('canvas');
+        rawOut.width = ow;
+        rawOut.height = oh;
+        const rOutCtx = rawOut.getContext('2d');
+        rOutCtx.imageSmoothingEnabled = true;
+        rOutCtx.imageSmoothingQuality = 'high';
+        rOutCtx.drawImage(el.rawCanvas, sx, sy, sw, sh, 0, 0, ow, oh);
+
+        // Filtered cropped canvas
+        const imgData = rawCtx.getImageData(0, 0, pw, ph);
+        const filtered = applyEnhancementFilters(imgData);
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = pw;
+        tempCanvas.height = ph;
+        tempCanvas.getContext('2d').putImageData(filtered, 0, 0);
+
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = ow;
+        outCanvas.height = oh;
+        const oCtx = outCanvas.getContext('2d');
+        oCtx.imageSmoothingEnabled = true;
+        oCtx.imageSmoothingQuality = 'high';
+        oCtx.drawImage(tempCanvas, sx, sy, sw, sh, 0, 0, ow, oh);
+        outCanvas._rawCanvas = rawOut;
+        outCanvas._sharpness = computeSharpnessScore(rawOut);
+
+        return outCanvas;
+      }
+
+      // ===== Burst Best-Frame Selector (Anti-Motion-Blur) =====
+      async function captureBestSharpFrame(burstCount = 3) {
+        let best = captureFilteredSnapshot();
+        if (!best || state.sourceType === 'demo') return best;
+        for (let i = 1; i < burstCount; i++) {
+          await new Promise(r => setTimeout(r, 85));
+          const cand = captureFilteredSnapshot();
+          if (cand && cand._sharpness > best._sharpness) {
+            best = cand;
+          }
+        }
+        return best;
+      }
+
+
+
+      // ===== Frame Diff Check (Avoid Redundant API Calls) =====
+      function isFrameChanged(snapshotCanvas) {
+        diffCtx.drawImage(snapshotCanvas, 0, 0, 64, 64);
+        const curr = diffCtx.getImageData(0, 0, 64, 64).data;
+        if (!state.lastSentDiffData) {
+          state.lastSentDiffData = new Uint8ClampedArray(curr);
+          return true;
+        }
+        let diffSum = 0;
+        const prev = state.lastSentDiffData;
+        for (let i = 0; i < curr.length; i += 4) {
+          diffSum += Math.abs(curr[i] - prev[i]);
+        }
+        const avgDiff = diffSum / (64 * 64);
+        if (avgDiff < 4.5) {
+          return false;
+        }
+        state.lastSentDiffData = new Uint8ClampedArray(curr);
+        return true;
+      }
+
+      // ===== Build AI Prompt =====
+      function buildPrompt() {
+        const modeMap = {
+          eng_all: '이 이미지는 영어 시험 문제(단어, 어법, 논리, 문법, 독해 중 하나)입니다. 지문과 보기를 정밀하게 판독해 가장 정확한 최종 정답만 도출하세요.',
+          eng_vocab: '영어 단어·어휘 문제입니다. 문맥상 의미, 동의어/반의어, 콜로케이션을 정확히 판단해 최종 정답만 도출하세요.',
+          eng_grammar: '영어 어법·문법 문제입니다. 수일치, 시제, 태, 준동사, 관계사, 병렬구조 등 문법적 정오를 판별해 최종 정답만 도출하세요.',
+          eng_logic: '영어 논리·빈칸 추론(연결사, 문장 삽입, 글의 순서) 문제입니다. 논리적 흐름과 인과관계를 분석해 최종 정답만 도출하세요.',
+          eng_reading: '영어 독해(주제, 요지, 제목, 내용 일치·불일치, 추론) 문제입니다. 지문의 핵심 근거를 바탕으로 최종 정답만 도출하세요.'
+        };
+        const base = modeMap[el.problemModeSelect.value] || modeMap.eng_all;
+        const custom = state.settings.customPrompt ? `\n추가 지침: ${state.settings.customPrompt}` : '';
+        return `${base}\n\n[저화질·분할 촬영 보정 지침]\n- 초소형 카메라 특성상 글씨가 흐릿하거나, 90°/180° 회전·좌우반전되거나, 일부 잘릴 수 있습니다. 방향을 스스로 바로잡아 읽고 앞뒤 문맥·연어·문법 단서로 흐린 단어를 복원해 판단하세요.\n- 보정 이미지와 원본 이미지가 함께 제공되면, 보정 이미지로 글씨를 읽고 원본 이미지로 밑줄(①~⑤)·음영·기호를 교차 확인하세요.
+- 초소형 광각 렌즈 특성상 화면 가장자리가 어둡거나(비네팅) 글자·줄이 바깥쪽으로 둥글게 휘어지는 배럴 왜곡이 생길 수 있습니다. 가장자리에 치우쳐 휘어진 문장, 문항 번호, 선택지(①~⑤) 기호도 곡률을 감안해 끝까지 판독하세요.\n- 이미지가 여러 장 전달될 수 있습니다. 가장 마지막(또는 첫 번째 이후)에 현재 화면과 직전 화면이 함께 올 수 있으며, 현재 화면에 지문 없이 24·25번처럼 앞장의 공통 지문([23~25] 등)에 연결된 문제만 보일 때는 직전 화면의 지문을 참고해 현재 화면에 보이는 문항만 푸세요. 이미 직전 화면에서 푼 문항은 중복 출력하지 마세요.\n- 사진이 가로로 눕혀져 있거나 180° 뒤집혀 있어도 스스로 회전해 읽으세요.\n- 문항번호가 화면에 안 보이고 문제와 보기만 있을 때는 "번호없음: 정답번호" 형식으로 출력하세요.\n- 핵심 지문과 보기가 결정적으로 잘려 판단 자체가 불가능할 때만 "문항번호: 재촬영 필요"로 출력하세요.\n\n규칙: 반드시 "문항번호: 정답번호" 형식만 출력하세요. 마크다운(**), 문제 본문, 해석, 설명, 인사말은 절대 쓰지 마세요.\n출력 예시:\n14번: ③${custom}`;
+      }
+
+      // ===== Call AI Vision API =====
+      async function analyzeSnapshot(isAuto = false) {
+        if (!state.sourceType) {
+          if (!isAuto) showToast('먼저 카메라, 외부 화면 또는 샘플을 연결하세요.', 'warn');
+          return;
+        }
+        if (state.isAnalyzing) return;
+
+        const snapCanvas = await captureBestSharpFrame(5);
+        if (!snapCanvas) return;
+
+        if (isAuto && state.sourceType !== 'demo') {
+          const skipReason = isOccludedOrBlank(snapCanvas);
+          if (skipReason) {
+            el.countdownBadge.textContent = `${skipReason} 대기`;
+            // Keep pendingChangeToAnalyze armed so uncovering the lens immediately re-triggers analysis
+            state.pendingChangeToAnalyze = true;
+            state.lastStableChangeAt = Date.now();
+            return;
+          }
+        }
+
+        if (isAuto && el.intervalSecSelect.value !== 'smart' && el.changeDetectToggle.checked && !isFrameChanged(snapCanvas)) {
+          return; // Skip unchanged frame in fixed-interval mode
+        }
+        vibrateEvent('captured');
+
+        const dataUrl = snapCanvas.toDataURL('image/jpeg', 0.90);
+        const promptText = buildPrompt();
+        const currentShot = {
+          filteredB64: dataUrl.split(',')[1],
+          rawB64: snapCanvas._rawCanvas ? snapCanvas._rawCanvas.toDataURL('image/jpeg', 0.88).split(',')[1] : null
+        };
+        let shotsToSend = [currentShot];
+        let contextPassageShot = null;
+        if (isAuto && state.autoCarryShot && (Date.now() - state.autoCarryShot.ts < 60000)) {
+          shotsToSend = [state.autoCarryShot.shot, currentShot];
+        } else if (isAuto && state.lastSuccessShot && (Date.now() - state.lastSuccessShot.ts < 90000)) {
+          contextPassageShot = state.lastSuccessShot.shot;
+        }
+        const useDual = el.dualSendToggle && el.dualSendToggle.checked;
+        const geminiParts = [{ text: promptText }];
+        if (contextPassageShot) {
+          geminiParts.push({ text: '[참고용 직전 화면 — 현재 화면에 지문이 없을 때만 참고, 이 화면의 문항은 중복 출력 금지]' });
+          geminiParts.push({ inline_data: { mime_type: 'image/jpeg', data: contextPassageShot.filteredB64 } });
+          geminiParts.push({ text: '[현재 풀어야 할 메인 화면]' });
+        }
+        shotsToSend.forEach((sh) => {
+          geminiParts.push({ inline_data: { mime_type: 'image/jpeg', data: sh.filteredB64 } });
+          if (useDual && sh.rawB64) {
+            geminiParts.push({ inline_data: { mime_type: 'image/jpeg', data: sh.rawB64 } });
+          }
+        });
+
+        state.isAnalyzing = true;
+        el.analyzingSpinner.classList.remove('hidden');
+        setStatus('busy', 'AI 문제 분석 중...');
+
+        try {
+          let answerText = '';
+          let isDemo = false;
+
+          if (!state.settings.apiKey) {
+            isDemo = true;
+            await new Promise(r => setTimeout(r, 450));
+            answerText = `14번: ③`;
+          } else if (state.settings.provider === 'gemini') {
+            const callGeminiWithKey = async (keyToUse, label) => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 25000);
+              try {
+                setStatus('busy', `${state.settings.model} (${label}) 요청 중...`);
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(state.settings.model)}:generateContent?key=${encodeURIComponent(keyToUse)}`;
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  signal: controller.signal,
+                  body: JSON.stringify({
+                    contents: [{ parts: geminiParts }],
+                    generationConfig: { temperature: 0.1, maxOutputTokens: 256 }
+                  })
+                });
+                const rawText = await res.text();
+                let json = {};
+                try { json = JSON.parse(rawText); } catch (e) {}
+                if (!res.ok) {
+                  const err = new Error(json.error?.message || `HTTP ${res.status}`);
+                  err.httpStatus = res.status;
+                  throw err;
+                }
+                const txt = json.candidates?.[0]?.content?.parts?.map(p => p.text).join('\n') || '';
+                return txt.trim() || '재촬영 필요';
+              } finally {
+                clearTimeout(timeoutId);
+              }
+            };
+
+            try {
+              answerText = await callGeminiWithKey(state.settings.apiKey, '기본 키');
+            } catch (geminiErr) {
+              const st = geminiErr.httpStatus || 0;
+              const isServerOrQuotaError =
+                st === 429 ||
+                st >= 500 ||
+                geminiErr.name === 'AbortError' ||
+                geminiErr instanceof TypeError;
+              if (isServerOrQuotaError && state.settings.backupGeminiKey) {
+                showToast(`기본 Gemini 제한(HTTP ${st || '연결'}) — 백업 Gemini 키로 자동 전환합니다.`, 'info');
+                answerText = await callGeminiWithKey(state.settings.backupGeminiKey, '백업 키');
+              } else {
+                throw geminiErr;
+              }
+            }
+          } else {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 45000);
+            try {
+              setStatus('busy', `${state.settings.model} 요청 중...`);
+              const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${state.settings.apiKey}`
+                },
+                signal: controller.signal,
+                body: JSON.stringify({
+                  model: state.settings.model || 'gpt-4o-mini',
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      { type: 'text', text: promptText },
+                      { type: 'image_url', image_url: { url: dataUrl } }
+                    ]
+                  }],
+                  max_tokens: 256
+                })
+              });
+              const rawText = await res.text();
+              let json = {};
+              try { json = JSON.parse(rawText); } catch (e) {}
+              if (!res.ok) throw new Error(json.error?.message || `HTTP ${res.status}: ${rawText.slice(0, 180)}`);
+              answerText = json.choices?.[0]?.message?.content || '응답 텍스트를 받지 못했습니다.';
+            } catch (fetchErr) {
+              if (fetchErr.name === 'AbortError') {
+                throw new Error('요청 시간 초과(45초): 네트워크 또는 API 응답이 지연되고 있습니다.');
+              }
+              throw fetchErr;
+            } finally {
+              clearTimeout(timeoutId);
+            }
+          }
+
+          const nowStr = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+          renderResult(answerText, nowStr, isDemo);
+          if (isAuto && answerText.includes('재촬영')) {
+            state.autoCarryShot = { shot: currentShot, ts: Date.now() };
+          } else {
+            state.autoCarryShot = null;
+        state.lastSuccessShot = null;
+            if (isAuto) {
+              state.lastSuccessShot = { shot: currentShot, ts: Date.now() };
+            }
+          }
+          addHistoryItem({
+            id: Date.now(),
+            time: nowStr,
+            thumb: dataUrl,
+            text: answerText,
+            isDemo
+          });
+        } catch (err) {
+          vibrateEvent('error');
+          showToast(`AI 분석 실패: ${err.message}`, 'error');
+          el.resultContent.innerHTML = '';
+          const errBox = document.createElement('div');
+          errBox.className = 'p-4 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs sm:text-sm text-rose-200 space-y-1.5';
+          const errTitle = document.createElement('div');
+          errTitle.className = 'font-semibold text-rose-300';
+          errTitle.textContent = 'AI 요청 오류';
+          const errMsg = document.createElement('div');
+          errMsg.className = 'break-words';
+          errMsg.textContent = err.message;
+          errBox.appendChild(errTitle);
+          errBox.appendChild(errMsg);
+          el.resultContent.appendChild(errBox);
+        } finally {
+          state.isAnalyzing = false;
+          if (state.isAutoRunning && el.intervalSecSelect.value === 'smart') {
+            const postSnap = captureFilteredSnapshot();
+            if (postSnap) {
+              // Only update lastAnalyzedFrame if we didn't skip for occlusion
+              if (!el.countdownBadge.textContent.includes('대기')) {
+                markCurrentAsAnalyzed(postSnap);
+              } else {
+                getDiffMetrics(postSnap);
+              }
+            }
+          }
+          el.analyzingSpinner.classList.add('hidden');
+          if (state.sourceType) {
+            setStatus('live', state.sourceType === 'screen' ? '화면 캡처 중' : state.sourceType === 'camera' ? '카메라 연결됨' : '저화질 샘플 실행 중');
+          }
+        }
+      }
+
+      // ===== Render Result Card =====
+      function renderResult(text, timeStr, isDemo) {
+        state.currentResultText = text;
+        el.resultTimestamp.textContent = timeStr;
+
+        const lines = text.replace(/\*\*/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+        el.resultContent.innerHTML = '';
+
+        const header = document.createElement('div');
+        header.className = 'flex items-center justify-between mb-1';
+        header.innerHTML = `
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-indigo-300">문항번호 · 정답</span>
+          ${isDemo ? '<span class="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">데모 응답 (API 키 미설정)</span>' : ''}
+        `;
+        el.resultContent.appendChild(header);
+
+        const list = document.createElement('div');
+        list.className = 'space-y-2.5';
+
+        lines.forEach(line => {
+          const card = document.createElement('div');
+          card.className = 'p-4 rounded-xl bg-gradient-to-r from-indigo-600/20 to-cyan-600/15 border border-indigo-500/40 flex items-center justify-between gap-3';
+          const colonIdx = line.indexOf(':');
+          if (colonIdx > 0) {
+            const qNum = line.slice(0, colonIdx).trim();
+            const ans = line.slice(colonIdx + 1).trim();
+            const qSpan = document.createElement('span');
+            qSpan.className = 'text-sm sm:text-base font-semibold text-indigo-200 shrink-0';
+            qSpan.textContent = qNum;
+            const aSpan = document.createElement('span');
+            aSpan.className = 'text-xl sm:text-2xl font-bold text-white break-words text-right';
+            aSpan.textContent = ans;
+            card.appendChild(qSpan);
+            card.appendChild(aSpan);
+          } else {
+            const fullSpan = document.createElement('span');
+            fullSpan.className = 'text-lg sm:text-xl font-bold text-white break-words';
+            fullSpan.textContent = line;
+            card.appendChild(fullSpan);
+          }
+          list.appendChild(card);
+        });
+
+        el.resultContent.appendChild(list);
+        if (el.vibrateToggle && el.vibrateToggle.checked) {
+          if (!text.includes('재촬영')) {
+            triggerResultVibration(text);
+          }
+        }
+      }
+
+      // ===== Vibration Signal Encoder (Question Number vs Answer Separated) =====
+      let vibrateTimeouts = [];
+      function clearVibratePlayback() {
+        state.isVibrating = false;
+        vibrateTimeouts.forEach(t => clearTimeout(t));
+        vibrateTimeouts = [];
+        if (navigator.vibrate) {
+          try { navigator.vibrate(0); } catch (e) {}
+        }
+        el.vibratePulseDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600 shrink-0 transition-transform duration-75';
+      }
+
+      function parseChoiceOrDigits(str) {
+        const circled = { '①': '1', '②': '2', '③': '3', '④': '4', '⑤': '5', '⑥': '6', '⑦': '7', '⑧': '8', '⑨': '9' };
+        const alpha = { 'A': '1', 'B': '2', 'C': '3', 'D': '4', 'E': '5' };
+        let normalized = str.replace(/[*_`\[\]().,번]/g, ' ');
+        for (const [k, v] of Object.entries(circled)) {
+          normalized = normalized.replaceAll(k, v);
+        }
+        const tokens = normalized.trim().split(/\s+/).filter(Boolean);
+        const firstToken = (tokens[0] || '').toUpperCase();
+        if (alpha[firstToken]) return [parseInt(alpha[firstToken], 10)];
+        const digits = firstToken.match(/\d/g);
+        if (digits && digits.length > 0) return digits.map(d => parseInt(d, 10));
+        const anyAlpha = normalized.toUpperCase().match(/\b([A-E])\b/);
+        if (anyAlpha && alpha[anyAlpha[1]]) return [parseInt(alpha[anyAlpha[1]], 10)];
+        const anyDigits = normalized.match(/\d/g);
+        if (anyDigits && anyDigits.length > 0) return [parseInt(anyDigits[0], 10)];
+        return [];
+      }
+
+      function buildVibrationTimeline(text) {
+        const lines = text.replace(/\*\*/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+        const pattern = []; // [onMs, offMs, ...]
+        const events = [];  // { offsetMs, durationMs, label, color }
+        let cursor = 0;
+
+        const strength = state.vibrateStrength || 1.0;
+        const stealth = el.stealthVibrateToggle ? el.stealthVibrateToggle.checked : true;
+        const pushPulse = (onMs, offMs, label, color) => {
+          // Always a single unbroken pulse per unit (never split into sub-taps)
+          let baseMs = onMs;
+          if (stealth) {
+            if (onMs >= 400) baseMs = 115;      // Tens: single 115ms pulse
+            else if (onMs >= 250) baseMs = 95;  // 5-anchor: single 95ms pulse
+            else if (onMs >= 180) baseMs = 65;  // Answer choice: single 65ms pulse
+            else baseMs = 70;                   // Ones (+1~4): bumped to 70ms for crisp skin detection
+          }
+          const scaledOn = Math.max(28, Math.round(baseMs * strength));
+          pattern.push(scaledOn, offMs);
+          events.push({ offsetMs: cursor, durationMs: scaledOn, label, color });
+          cursor += scaledOn + offMs;
+        };
+
+        lines.forEach((line, lineIdx) => {
+          const colonIdx = line.indexOf(':');
+          const qPart = colonIdx > 0 ? line.slice(0, colonIdx).trim() : '';
+          const aPart = colonIdx > 0 ? line.slice(colonIdx + 1).trim() : line;
+
+          // 1) Question number (1~50):
+          //    - Tens (10~50): 450ms heavy pulse × tens (omitted if 1~9)
+          //    - Gap: 700ms silence before ones
+          //    - Ones (1~9) using 5-anchor encoding (max 4 quick taps!):
+          //      1~4 -> 95ms tap × (1~4)
+          //      5   -> 280ms pulse × 1
+          //      6~9 -> 280ms pulse × 1 (5) + 95ms tap × (1~4)
+          //    - Separator to Answer: 1500ms pure silence (no buzz)
+          const qNumMatch = qPart.match(/\d+/);
+          if (qNumMatch) {
+            const qNum = Math.min(99, Math.max(1, parseInt(qNumMatch[0], 10)));
+            const tens = Math.floor(qNum / 10);
+            const ones = qNum % 10;
+
+            if (tens > 0) {
+              for (let c = 0; c < tens; c++) {
+                const isLast = c === tens - 1;
+                const offMs = isLast ? (ones > 0 ? 950 : 2000) : 360;
+                pushPulse(450, offMs, `문항 십의자리 (${tens}0번대) · ${c + 1}/${tens}`, 'bg-sky-400 scale-125');
+              }
+            }
+
+            if (ones > 0) {
+              const hasFive = ones >= 5;
+              const rem = ones % 5;
+              if (hasFive) {
+                pushPulse(280, rem > 0 ? 620 : 2000, `문항 일의자리 (5 기준) · ${ones}`, 'bg-cyan-400 scale-125');
+              }
+              for (let c = 0; c < rem; c++) {
+                const isLast = c === rem - 1;
+                pushPulse(95, isLast ? 2000 : 380, `문항 일의자리 (+${c + 1}) · 총 ${ones}`, 'bg-cyan-400 scale-125');
+              }
+            }
+          } else {
+            // Question number not visible ('번호없음') -> skip question pulse so it isn't mistaken for #1
+          }
+
+          // 2) Answer choice (1~5): crisp 220ms pulse with 380ms gap
+          const aDigits = parseChoiceOrDigits(aPart);
+          aDigits.forEach((digit) => {
+            if (digit > 0) {
+              for (let c = 0; c < digit; c++) {
+                const isLast = c === digit - 1;
+                pushPulse(220, isLast ? 650 : 380, `정답 보기 (${aPart}) · ${c + 1}/${digit}`, 'bg-emerald-400 scale-125');
+              }
+            }
+          });
+
+          if (lineIdx < lines.length - 1 && pattern.length > 0) {
+            pattern[pattern.length - 1] += 1600;
+            cursor += 1600;
+          }
+        });
+
+        return { pattern, events, totalMs: cursor };
+      }
+
+      function triggerResultVibration(text) {
+        if (!text) return;
+        clearVibratePlayback();
+
+        const { pattern, events, totalMs } = buildVibrationTimeline(text);
+        if (pattern.length === 0) return;
+        state.isVibrating = true;
+
+        el.vibrateIndicatorBar.classList.remove('hidden');
+        const hasVibrate = typeof navigator.vibrate === 'function';
+        let vibrateAccepted = false;
+        if (hasVibrate) {
+          try {
+            vibrateAccepted = navigator.vibrate(pattern);
+          } catch (e) {
+            vibrateAccepted = false;
+          }
+        }
+
+        if (!hasVibrate || !vibrateAccepted) {
+          el.vibratePhaseText.textContent = '화면 진동 시뮬레이션 재생 중 (하드웨어 미지원)';
+        }
+
+        events.forEach(ev => {
+          const tOn = setTimeout(() => {
+            el.vibratePulseDot.className = `w-2.5 h-2.5 rounded-full shrink-0 transition-transform duration-75 ${ev.color}`;
+            el.vibratePhaseText.textContent = ev.label;
+          }, ev.offsetMs);
+          const tOff = setTimeout(() => {
+            el.vibratePulseDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600 shrink-0 transition-transform duration-75';
+          }, ev.offsetMs + ev.durationMs);
+          vibrateTimeouts.push(tOn, tOff);
+        });
+
+        const tEnd = setTimeout(() => {
+          state.isVibrating = false;
+          el.vibratePhaseText.textContent = '진동 알림 완료';
+          el.vibratePulseDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500 shrink-0';
+        }, totalMs + 250);
+        vibrateTimeouts.push(tEnd);
+      }
+
+      // ===== History Management =====
+      function addHistoryItem(item) {
+        state.history.unshift(item);
+        if (state.history.length > 20) state.history.pop();
+        renderHistory();
+      }
+
+      function renderHistory() {
+        el.historyCount.textContent = String(state.history.length);
+        if (state.history.length === 0) {
+          el.historyList.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">기록된 캡처 내역이 여기에 표시됩니다.</p>';
+          return;
+        }
+        el.historyList.innerHTML = '';
+        state.history.forEach(item => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'w-full text-left flex items-center gap-3 p-2 rounded-xl bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 transition';
+          const previewLine = item.text.replace(/\[정답\]\s*/g, '').split('\n').find(l => l.trim()) || '분석 결과';
+          row.innerHTML = `
+            <img src="${item.thumb}" alt="캡처 썸네일" class="w-14 h-10 object-cover rounded-lg border border-slate-700 shrink-0" />
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold text-white truncate"></span>
+                <span class="text-[11px] font-mono text-slate-500 shrink-0">${item.time}</span>
+              </div>
+              <p class="text-[11px] text-slate-400 truncate mt-0.5">${item.isDemo ? '데모 모드 · ' : ''}클릭하여 전체 풀이 보기</p>
+            </div>
+          `;
+          row.querySelector('span.text-white').textContent = previewLine;
+          row.addEventListener('click', () => {
+            renderResult(item.text, item.time, item.isDemo);
+          });
+          el.historyList.appendChild(row);
+        });
+      }
+
+      // ===== Vibration Reserved Strictly for Question Number & Answer =====
+      function vibrateEvent() {
+        // Only question number and answer vibrate; all other events stay silent
+      }
+
+      async function requestWakeLock() {
+        if ('wakeLock' in navigator && !state.wakeLock) {
+          try {
+            state.wakeLock = await navigator.wakeLock.request('screen');
+            state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+          } catch (e) {}
+        }
+      }
+
+      function releaseWakeLock() {
+        if (state.wakeLock) {
+          try { state.wakeLock.release(); } catch (e) {}
+          state.wakeLock = null;
+        }
+      }
+
+      // Use raw (un-sharpened) 16x16 block luminance so sensor grain never triggers false '이동 중...'
+      function sampleRawGrid(canvas) {
+        const src = canvas._rawCanvas || canvas;
+        diffCtx.clearRect(0, 0, 16, 16);
+        diffCtx.drawImage(src, 0, 0, 16, 16);
+        const d = diffCtx.getImageData(0, 0, 16, 16).data;
+        const grid = new Uint8Array(256);
+        for (let i = 0, p = 0; p < 256; i += 4, p++) {
+          grid[p] = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+        }
+        return grid;
+      }
+
+      function getDiffMetrics(canvas) {
+        const curr = sampleRawGrid(canvas);
+        const calcPct = (ref) => {
+          if (!ref) return 100;
+          let changed = 0;
+          for (let i = 0; i < 256; i++) {
+            if (Math.abs(curr[i] - ref[i]) > 14) changed++;
+          }
+          return (changed / 256) * 100;
+        };
+
+        const motionPct = calcPct(state.lastMonitorFrame);
+        const pageChangePct = calcPct(state.lastAnalyzedFrame);
+        state.lastMonitorFrame = curr;
+        return { motionPct, pageChangePct };
+      }
+
+      function markCurrentAsAnalyzed(canvas) {
+        if (!canvas) return;
+        const curr = sampleRawGrid(canvas);
+        state.lastAnalyzedFrame = curr;
+        state.lastMonitorFrame = curr;
+      }
+
+      function updateAutoRunButtonUI() {
+        if (state.isAutoRunning) {
+          el.autoRunBtn.className = 'inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white text-sm font-semibold shadow-lg shadow-rose-600/25 transition';
+          el.autoRunDot.className = 'w-2.5 h-2.5 rounded-full bg-white animate-ping';
+          el.autoRunLabel.textContent = '자동 멈춤';
+          el.countdownBadge.classList.remove('hidden');
+        } else {
+          el.autoRunBtn.className = 'inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-semibold shadow-lg shadow-emerald-600/20 transition';
+          el.autoRunDot.className = 'w-2.5 h-2.5 rounded-full bg-white';
+          el.autoRunLabel.textContent = '자동 감시 시작';
+          el.countdownBadge.classList.add('hidden');
+        }
+      }
+
+      function stopAutoRunner(silent = false) {
+        const wasRunning = state.isAutoRunning;
+        state.isAutoRunning = false;
+        el.autoIntervalToggle.checked = false;
+        if (state.intervalTimer) {
+          clearInterval(state.intervalTimer);
+          state.intervalTimer = null;
+        }
+        if (state.smartWatchTimer) {
+          clearInterval(state.smartWatchTimer);
+          state.smartWatchTimer = null;
+        }
+        state.pendingChangeToAnalyze = false;
+        state.lastMonitorFrame = null;
+        state.lastAnalyzedFrame = null;
+        state.autoCarryShot = null;
+        clearVibratePlayback();
+        if (!state.sourceType && !state.isTouchLocked) releaseWakeLock();
+        updateAutoRunButtonUI();
+        if (wasRunning && !silent) {
+          vibrateEvent('stop');
+          showToast('자동 감시가 멈췄습니다.', 'info');
+        }
+      }
+
+      function startAutoRunner() {
+        if (!state.sourceType) {
+          showToast('먼저 카메라 또는 외부 화면을 연결하세요.', 'warn');
+          return;
+        }
+        stopAutoRunner(true);
+        state.isAutoRunning = true;
+        el.autoIntervalToggle.checked = true;
+        requestWakeLock();
+        updateAutoRunButtonUI();
+        vibrateEvent('start');
+
+        const mode = el.intervalSecSelect.value;
+        if (mode === 'smart') {
+          el.countdownBadge.textContent = '스마트 감시 중';
+          const initSnap = captureFilteredSnapshot();
+          if (initSnap) markCurrentAsAnalyzed(initSnap);
+          state.pendingChangeToAnalyze = false;
+          analyzeSnapshot(true);
+          state.smartWatchTimer = setInterval(() => {
+            if (!state.isAutoRunning || !state.sourceType) {
+              stopAutoRunner(true);
+              return;
+            }
+            if (state.isAnalyzing) return;
+            if (state.isVibrating) {
+              el.countdownBadge.textContent = '진동 중 대기';
+              return;
+            }
+            const snap = captureFilteredSnapshot();
+            if (!snap) return;
+            const { motionPct, pageChangePct } = getDiffMetrics(snap);
+
+            if (motionPct >= 10.0) {
+              // Actively flipping page or swinging camera fast -> wait briefly
+              state.pendingChangeToAnalyze = true;
+              state.lastStableChangeAt = Date.now();
+              el.countdownBadge.textContent = '이동 중...';
+            } else if (pageChangePct >= 5.5) {
+              // New page detected! Tolerate normal hand tremor (< 10%) and capture after short 500ms settle
+              if (!state.pendingChangeToAnalyze) {
+                state.pendingChangeToAnalyze = true;
+                state.lastStableChangeAt = Date.now();
+                el.countdownBadge.textContent = '변화 감지...';
+              } else if (Date.now() - state.lastStableChangeAt >= 500) {
+                state.pendingChangeToAnalyze = false;
+                el.countdownBadge.textContent = '새 페이지 포착';
+                analyzeSnapshot(true);
+              }
+            } else {
+              state.pendingChangeToAnalyze = false;
+              el.countdownBadge.textContent = '새 문제 대기';
+            }
+          }, 600);
+        } else {
+          const sec = parseInt(mode, 10) || 5;
+          state.countdownSec = sec;
+          el.countdownBadge.textContent = `${state.countdownSec}s`;
+          analyzeSnapshot(true);
+          state.intervalTimer = setInterval(() => {
+            if (!state.isAutoRunning || !state.sourceType) {
+              stopAutoRunner(true);
+              return;
+            }
+            state.countdownSec -= 1;
+            if (state.isVibrating) {
+              el.countdownBadge.textContent = '진동 중 대기';
+              return;
+            }
+            if (state.countdownSec <= 0) {
+              state.countdownSec = parseInt(el.intervalSecSelect.value, 10) || 5;
+              analyzeSnapshot(true);
+            }
+            el.countdownBadge.textContent = `${state.countdownSec}s`;
+          }, 1000);
+        }
+      }
+
+      function syncAutoInterval() {
+        if (state.isAutoRunning) {
+          startAutoRunner();
+        }
+      }
+
+
+
+      // ===== Event Listeners =====
+      el.connectScreenBtn.addEventListener('click', startScreenCapture);
+      el.connectCameraBtn.addEventListener('click', startCameraCapture);
+      el.demoStreamBtn.addEventListener('click', startDemoStream);
+      el.emptyDemoBtn.addEventListener('click', startDemoStream);
+      el.autoRunBtn.addEventListener('click', () => {
+        if (state.isAutoRunning) {
+          stopAutoRunner(false);
+        } else {
+          startAutoRunner();
+        }
+      });
+      el.stopStreamBtn.addEventListener('click', () => {
+        stopAutoRunner(true);
+        stopCurrentStream();
+      });
+
+
+
+
+      el.autoIntervalToggle.addEventListener('change', syncAutoInterval);
+      el.intervalSecSelect.addEventListener('change', () => {
+        if (el.autoIntervalToggle.checked) syncAutoInterval();
+      });
+
+
+
+      // Vibration strength & quick tests
+      el.vibrateStrengthSlider.addEventListener('input', () => {
+        state.vibrateStrength = parseFloat(el.vibrateStrengthSlider.value) || 1.0;
+        el.vibrateStrengthVal.textContent = `${Math.round(state.vibrateStrength * 100)}%`;
+      });
+      document.querySelectorAll('.vib-test-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sample = btn.getAttribute('data-vib-test');
+          triggerResultVibration(sample);
+        });
+      });
+
+      // Replay vibration
+      el.replayVibrateBtn.addEventListener('click', () => {
+        if (!state.currentResultText) {
+          showToast('진동으로 알릴 분석 결과가 없습니다.', 'warn');
+          return;
+        }
+        triggerResultVibration(state.currentResultText);
+      });
+
+      // Copy result
+      el.copyResultBtn.addEventListener('click', async () => {
+        if (!state.currentResultText) {
+          showToast('복사할 분석 결과가 없습니다.', 'warn');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(state.currentResultText);
+          showToast('결과가 클립보드에 복사되었습니다.', 'success');
+        } catch (e) {
+          const ta = document.createElement('textarea');
+          ta.value = state.currentResultText;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+          showToast('결과가 클립보드에 복사되었습니다.', 'success');
+        }
+      });
+
+      el.clearHistoryBtn.addEventListener('click', () => {
+        state.history = [];
+        renderHistory();
+      });
+
+      // Settings modal
+      el.openSettingsBtn.addEventListener('click', () => {
+        el.settingsModal.classList.remove('hidden');
+        el.settingsModal.classList.add('flex');
+      });
+      el.closeSettingsBtn.addEventListener('click', () => {
+        el.settingsModal.classList.add('hidden');
+        el.settingsModal.classList.remove('flex');
+      });
+      el.providerSelect.addEventListener('change', () => {
+        if (el.providerSelect.value === 'gemini' && el.modelInput.value.startsWith('gpt')) {
+          el.modelInput.value = 'gemini-3.8-flash';
+        } else if (el.providerSelect.value === 'openai' && el.modelInput.value.startsWith('gemini')) {
+          el.modelInput.value = 'gpt-4o-mini';
+        }
+      });
+      document.querySelectorAll('.model-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          el.providerSelect.value = 'gemini';
+          el.modelInput.value = btn.getAttribute('data-model-preset');
+        });
+      });
+      el.toggleKeyVisBtn.addEventListener('click', () => {
+        const isPass = el.apiKeyInput.type === 'password';
+        el.apiKeyInput.type = isPass ? 'text' : 'password';
+        el.toggleKeyVisBtn.textContent = isPass ? '숨김' : '보기';
+      });
+      el.clearApiKeyBtn.addEventListener('click', () => {
+        el.apiKeyInput.value = '';
+        state.settings.apiKey = '';
+        try { localStorage.removeItem('visionsolve_settings_v1'); } catch (e) {}
+        updateApiModeBadge();
+        showToast('저장된 API 키가 삭제되었습니다.', 'info');
+      });
+      el.saveSettingsBtn.addEventListener('click', saveSettings);
+      el.testApiBtn.addEventListener('click', async () => {
+        const provider = el.providerSelect.value;
+        const model = 'gemini-3.5-flash-lite';
+        const key = el.apiKeyInput.value.trim();
+        el.apiTestResult.classList.remove('hidden');
+        if (!key) {
+          el.apiTestResult.className = 'text-xs px-3 py-2 rounded-xl border bg-amber-950/60 border-amber-500/40 text-amber-200';
+          el.apiTestResult.textContent = 'API 키를 먼저 입력하세요.';
+          return;
+        }
+        el.apiTestResult.className = 'text-xs px-3 py-2 rounded-xl border bg-slate-800 border-slate-700 text-slate-300';
+        el.apiTestResult.textContent = `${model} 연결 확인 중...`;
+        const controller = new AbortController();
+        const tid = setTimeout(() => controller.abort(), 45000);
+        try {
+          if (provider === 'gemini') {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with OK' }] }] })
+            });
+            const raw = await res.text();
+            let j = {};
+            try { j = JSON.parse(raw); } catch (e) {}
+            if (!res.ok) throw new Error(j.error?.message || `HTTP ${res.status}`);
+            el.apiTestResult.className = 'text-xs px-3 py-2 rounded-xl border bg-emerald-950/60 border-emerald-500/40 text-emerald-200';
+            el.apiTestResult.textContent = `연결 성공 (${model}) — 정상 응답 수신됨`;
+          } else {
+            const res = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+              signal: controller.signal,
+              body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with OK' }], max_tokens: 10 })
+            });
+            const raw = await res.text();
+            let j = {};
+            try { j = JSON.parse(raw); } catch (e) {}
+            if (!res.ok) throw new Error(j.error?.message || `HTTP ${res.status}`);
+            el.apiTestResult.className = 'text-xs px-3 py-2 rounded-xl border bg-emerald-950/60 border-emerald-500/40 text-emerald-200';
+            el.apiTestResult.textContent = `연결 성공 (${model}) — 정상 응답 수신됨`;
+          }
+        } catch (err) {
+          el.apiTestResult.className = 'text-xs px-3 py-2 rounded-xl border bg-rose-950/60 border-rose-500/40 text-rose-200';
+          el.apiTestResult.textContent = err.name === 'AbortError'
+            ? '연결 시간 초과(45초): 현재 네트워크(방화벽/사내망)에서 Google API가 차단되었거나, 채팅 옆 미리보기 창에서 실행 중일 수 있습니다. 다운로드한 파일(주소창 file:///)에서 실행 중인지 확인하거나 3.5-flash-lite로 시도해 보세요.'
+            : `연결 실패: ${err.message}`;
+        } finally {
+          clearTimeout(tid);
+        }
+      });
+
+
+
+      // ===== Bluetooth Earbud Remote Control (MediaSession + 0dB Silent Audio) =====
+      let silentBlobUrl = null;
+      function getSilentWavUrl() {
+        if (silentBlobUrl) return silentBlobUrl;
+        // 4-second 16kHz 16-bit mono PCM 14Hz infrasound carrier (below 20Hz human hearing & 6mm driver rolloff)
+        // High enough digital RMS for Android Chrome to grant MediaSession/AVRCP focus
+        const sampleRate = 16000;
+        const numSamples = sampleRate * 10; // >= 5s required by Android Chrome to register MediaSession
+        const dataBytes = numSamples * 2;
+        const buffer = new ArrayBuffer(44 + dataBytes);
+        const view = new DataView(buffer);
+        const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + dataBytes, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, dataBytes, true);
+        for (let i = 0; i < numSamples; i++) {
+          const val = Math.round(14000 * Math.sin((2 * Math.PI * 14 * i) / sampleRate));
+          view.setInt16(44 + i * 2, val, true);
+        }
+        silentBlobUrl = URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
+        return silentBlobUrl;
+      }
+
+      let lastRemoteToggleAt = 0;
+      function toggleAutoByRemote() {
+        const now = Date.now();
+        if (now - lastRemoteToggleAt < 450) return; // debounce accidental double-trigger
+        lastRemoteToggleAt = now;
+        if (!state.sourceType) {
+          showToast('먼저 카메라 또는 외부 화면을 연결하세요.', 'warn');
+          return;
+        }
+        if (state.isAutoRunning) {
+          stopAutoRunner(false);
+        } else {
+          startAutoRunner();
+        }
+      }
+
+      async function enableEarbudRemote() {
+        try {
+          if (!el.silentAudio.src) {
+            el.silentAudio.src = getSilentWavUrl();
+          }
+          el.silentAudio.volume = 0.2;
+          await el.silentAudio.play();
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: 'VisionSolve 리모컨 대기',
+              artist: '터치 1회: 시작/멈춤 · 다음곡: 진동 재확인'
+            });
+            navigator.mediaSession.playbackState = 'playing';
+            const keepPlaying = () => {
+              state.lastRemoteActionAt = Date.now();
+              setTimeout(() => {
+                el.silentAudio.play().catch(() => {});
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+              }, 120);
+            };
+            navigator.mediaSession.setActionHandler('play', () => {
+              keepPlaying();
+              toggleAutoByRemote();
+            });
+            navigator.mediaSession.setActionHandler('pause', () => {
+              keepPlaying();
+              toggleAutoByRemote();
+            });
+            navigator.mediaSession.setActionHandler('stop', () => {
+              keepPlaying();
+              toggleAutoByRemote();
+            });
+            navigator.mediaSession.setActionHandler('nexttrack', () => {
+              keepPlaying();
+              if (state.currentResultText) triggerResultVibration(state.currentResultText);
+            });
+            navigator.mediaSession.setActionHandler('previoustrack', () => {
+              keepPlaying();
+              analyzeSnapshot(false);
+            });
+          }
+          state.earbudConnectedActive = true;
+          try { if (typeof navigator.vibrate === 'function') navigator.vibrate([50, 60, 50]); } catch (e) {}
+          showToast('블루투스 이어폰 리모컨이 활성화되었습니다 (1회 터치: 시작/멈춤)', 'success');
+        } catch (e) {
+          el.earbudRemoteToggle.checked = false;
+          showToast('이어폰 리모컨 활성화를 위해 화면을 한 번 터치한 뒤 다시 켜주세요.', 'warn');
+        }
+      }
+
+      function vibrateDisconnectAlert() {
+        try { if (typeof navigator.vibrate === 'function') navigator.vibrate([120, 80, 120]); } catch (e) {}
+      }
+
+      function disableEarbudRemote(notifyDisconnect = false) {
+        state.earbudConnectedActive = false;
+        try { el.silentAudio.pause(); } catch (e) {}
+        if (notifyDisconnect) vibrateDisconnectAlert();
+        if ('mediaSession' in navigator) {
+          try {
+            navigator.mediaSession.setActionHandler('play', null);
+            navigator.mediaSession.setActionHandler('pause', null);
+            navigator.mediaSession.setActionHandler('nexttrack', null);
+            navigator.mediaSession.setActionHandler('previoustrack', null);
+            navigator.mediaSession.playbackState = 'none';
+          } catch (e) {}
+        }
+      }
+
+      el.earbudRemoteToggle.addEventListener('change', () => {
+        if (el.earbudRemoteToggle.checked) {
+          enableEarbudRemote();
+        } else {
+          disableEarbudRemote(true);
+          showToast('이어폰 리모컨이 꺼졌습니다.', 'info');
+        }
+      });
+
+      // Detect unexpected audio pause (e.g. Bluetooth earbud disconnected on Android)
+      el.silentAudio.addEventListener('pause', () => {
+        if (!state.earbudConnectedActive || !el.earbudRemoteToggle.checked) return;
+        if (Date.now() - state.lastRemoteActionAt < 800) return; // normal remote toggle
+        setTimeout(() => {
+          if (el.silentAudio.paused && state.earbudConnectedActive && el.earbudRemoteToggle.checked) {
+            vibrateDisconnectAlert();
+            showToast('이어폰 연결이 끊겼거나 일시 중단되었습니다.', 'warn');
+          }
+        }, 350);
+      });
+
+      // Re-acquire WakeLock, Earbud MediaSession, and Camera track when returning from interruptions
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          if (state.sourceType || state.isAutoRunning || state.isTouchLocked) {
+            requestWakeLock();
+          }
+          if (state.earbudConnectedActive && el.earbudRemoteToggle.checked) {
+            el.silentAudio.play().catch(() => {});
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+          }
+          if (state.sourceType === 'camera' && state.stream) {
+            const t = state.stream.getVideoTracks()[0];
+            if (!t || t.readyState === 'ended') {
+              startCameraCapture();
+            }
+          }
+        }
+      });
+
+      // Prevent accidental tab close / back navigation while active
+      window.addEventListener('beforeunload', (e) => {
+        if (state.sourceType || state.isAutoRunning || state.isTouchLocked) {
+          e.preventDefault();
+          e.returnValue = '';
+        }
+      });
+
+      // ===== Touch Lock Mode (AMOLED Black Overlay + 2.5s Long-Press Unlock) =====
+      let unlockRaf = null;
+      let unlockStart = 0;
+      const UNLOCK_HOLD_MS = 2500;
+
+      function armBackTrap() {
+        try {
+          if (!history.state || !history.state.visionLock) {
+            history.pushState({ visionLock: true }, '');
+          }
+        } catch (e) {}
+      }
+
+      function enterTouchLock() {
+        state.isTouchLocked = true;
+        requestWakeLock();
+        armBackTrap();
+        try {
+          if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {});
+          }
+        } catch (e) {}
+        el.touchLockOverlay.classList.remove('hidden');
+        el.touchLockOverlay.classList.add('flex');
+      }
+
+      function exitTouchLock() {
+        state.isTouchLocked = false;
+        el.touchLockOverlay.classList.add('hidden');
+        el.touchLockOverlay.classList.remove('flex');
+        el.unlockProgressBar.style.width = '0%';
+        try {
+          if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+          }
+        } catch (e) {}
+        if (!state.sourceType && !state.isAutoRunning) releaseWakeLock();
+        showToast('화면 터치 잠금이 해제되었습니다.', 'info');
+      }
+
+      // Trap Android/Chrome Back button while Touch Lock or Auto-Run is active
+      window.addEventListener('popstate', () => {
+        if (state.isTouchLocked || state.isAutoRunning || state.sourceType) {
+          try { history.pushState({ visionLock: true }, ''); } catch (e) {}
+        }
+      });
+
+      el.touchLockBtn.addEventListener('click', enterTouchLock);
+
+      const startUnlockHold = (e) => {
+        e.preventDefault();
+        unlockStart = performance.now();
+        const step = (now) => {
+          const pct = Math.min(100, ((now - unlockStart) / UNLOCK_HOLD_MS) * 100);
+          el.unlockProgressBar.style.width = `${pct}%`;
+          if (pct >= 100) {
+            cancelAnimationFrame(unlockRaf);
+            unlockRaf = null;
+            exitTouchLock();
+            return;
+          }
+          unlockRaf = requestAnimationFrame(step);
+        };
+        if (unlockRaf) cancelAnimationFrame(unlockRaf);
+        unlockRaf = requestAnimationFrame(step);
+      };
+
+      const cancelUnlockHold = () => {
+        if (unlockRaf) {
+          cancelAnimationFrame(unlockRaf);
+          unlockRaf = null;
+        }
+        el.unlockProgressBar.style.width = '0%';
+      };
+
+      el.touchLockOverlay.addEventListener('contextmenu', (e) => e.preventDefault());
+      el.touchLockOverlay.addEventListener('pointerdown', startUnlockHold);
+      el.touchLockOverlay.addEventListener('pointerup', cancelUnlockHold);
+      el.touchLockOverlay.addEventListener('pointercancel', cancelUnlockHold);
+
+      // Init
+      loadSettings();
+      populateCameraList();
+    })();
+  </script>
+</body>
+</html>
